@@ -1,17 +1,46 @@
 import express from "express";
 import bodyParser from "body-parser";
-import pg from "pg";
-import bcrypt from "bcrypt";
+import session from "express-session";
+import env from "dotenv";
 import passport from "passport";
 import { Strategy } from "passport-local";
 import GoogleStrategy from "passport-google-oauth2";
-import session from "express-session";
-import env from "dotenv";
+import bcrypt from "bcrypt";
+import mongoose from "mongoose";
+
+env.config();
 
 const app = express();
 const port = 3000;
 const saltRounds = 10;
-env.config();
+
+
+
+const db = mongoose.connection;
+
+// db.on("error", (err) => {
+//   console.error("connection error",err);
+// });
+
+// db.once("open", () => {
+//   console.log("Connected to MongoDB using Mongoose");
+// });
+
+const userSchema = new mongoose.Schema({
+  email: { type: String, required: true },
+  password: { type: String, required: true }
+});
+
+const User = mongoose.model("User", userSchema);
+
+console.log("Welcome to the Secrets App");
+
+const secretSchema = new mongoose.Schema({
+  user_id: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  secret: { type: String, required: true }
+});
+
+const Secret = mongoose.model("Secret", secretSchema);
 
 app.use(
   session({
@@ -26,14 +55,67 @@ app.use(express.static("public"));
 app.use(passport.initialize());
 app.use(passport.session());
 
-const db = new pg.Client({
-  user: process.env.PG_USER,
-  host: process.env.PG_HOST,
-  database: process.env.PG_DATABASE,
-  password: process.env.PG_PASSWORD,
-  port: process.env.PG_PORT,
+passport.use(
+  "local",
+  new Strategy(async function verify(username, password, cb) {
+    try {
+      const user = await User.findOne({ email: username });
+      if (user) {
+        const storedHashedPassword = user.password;
+        bcrypt.compare(password, storedHashedPassword, (err, valid) => {
+          if (err) {
+            console.error("Error comparing passwords:", err);
+            return cb(err);
+          } else {
+            if (valid) {
+              return cb(null, user);
+            } else {
+              return cb(null, false);
+            }
+          }
+        });
+      } else {
+        return cb("User not found");
+      }
+    } catch (err) {
+      console.log(err);
+    }
+  })
+);
+
+passport.use(
+  "google",
+  new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: "http://localhost:3000/auth/google/secrets",
+      userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo",
+    },
+    async (accessToken, refreshToken, profile, cb) => {
+      try {
+        const user = await User.findOne({ email: profile.email });
+        if (user) {
+          return cb(null, user);
+        } else {
+          const newUser = new User({ email: profile.email, password: "google" });
+          await newUser.save();
+          return cb(null, newUser);
+        }
+      } catch (err) {
+        return cb(err);
+      }
+    }
+  )
+);
+
+passport.serializeUser((user, cb) => {
+  cb(null, user);
 });
-db.connect();
+
+passport.deserializeUser((user, cb) => {
+  cb(null, user);
+});
 
 app.get("/", (req, res) => {
   res.render("home.ejs");
@@ -61,13 +143,8 @@ app.get("/secrets", async (req, res) => {
 
   if (req.isAuthenticated()) {
     try {
-      const result = await db.query(
-        `SELECT secret FROM secrets WHERE user_id = $1`,
-        [req.user.id]
-      );
-      console.log(result);
-      const secrets = result.rows.map((row) => row.secret);
-      res.render("secrets.ejs", { secrets: secrets });
+      const secrets = await Secret.find({ user_id: req.user.id });
+      res.render("secrets.ejs", { secrets: secrets.map((secret) => secret.secret) });
     } catch (err) {
       console.log(err);
     }
@@ -76,7 +153,6 @@ app.get("/secrets", async (req, res) => {
   }
 });
 
-////////////////SUBMIT GET ROUTE/////////////////
 app.get("/submit", function (req, res) {
   if (req.isAuthenticated()) {
     res.render("submit.ejs");
@@ -113,22 +189,17 @@ app.post("/register", async (req, res) => {
   const password = req.body.password;
 
   try {
-    const checkResult = await db.query("SELECT * FROM users WHERE email = $1", [
-      email,
-    ]);
+    const checkResult = await db.collection("users").findOne({ email: email });
 
-    if (checkResult.rows.length > 0) {
+    if (checkResult) {
       res.redirect("/login");
     } else {
       bcrypt.hash(password, saltRounds, async (err, hash) => {
         if (err) {
           console.error("Error hashing password:", err);
         } else {
-          const result = await db.query(
-            "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
-            [email, hash]
-          );
-          const user = result.rows[0];
+          const user = { email: email, password: hash };
+          await db.collection("users").insertOne(user);
           req.login(user, (err) => {
             console.log("success");
             res.redirect("/secrets");
@@ -141,29 +212,23 @@ app.post("/register", async (req, res) => {
   }
 });
 
-////////////////SUBMIT POST ROUTE/////////////////
 app.post("/submit", async function (req, res) {
   const submittedSecret = req.body.secret;
   console.log(req.user);
   try {
-    await db.query(`INSERT INTO secrets (user_id, secret) VALUES ($1, $2)`, [
-      req.user.id,
-      submittedSecret,
-    ]);
+    await db.collection("secrets").insertOne({ user_id: req.user.id, secret: submittedSecret });
     res.redirect("/secrets");
   } catch (err) {
     console.log(err);
   }
 });
+
 passport.use(
   "local",
   new Strategy(async function verify(username, password, cb) {
     try {
-      const result = await db.query("SELECT * FROM users WHERE email = $1 ", [
-        username,
-      ]);
-      if (result.rows.length > 0) {
-        const user = result.rows[0];
+      const user = await db.collection("users").findOne({ email: username });
+      if (user) {
         const storedHashedPassword = user.password;
         bcrypt.compare(password, storedHashedPassword, (err, valid) => {
           if (err) {
@@ -197,17 +262,13 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, cb) => {
       try {
-        const result = await db.query("SELECT * FROM users WHERE email = $1", [
-          profile.email,
-        ]);
-        if (result.rows.length === 0) {
-          const newUser = await db.query(
-            "INSERT INTO users (email, password) VALUES ($1, $2)",
-            [profile.email, "google"]
-          );
-          return cb(null, newUser.rows[0]);
+        const user = await db.collection("users").findOne({ email: profile.email });
+        if (user) {
+          return cb(null, user);
         } else {
-          return cb(null, result.rows[0]);
+          const newUser = { email: profile.email, password: "google" };
+          await db.collection("users").insertOne(newUser);
+          return cb(null, newUser);
         }
       } catch (err) {
         return cb(err);
@@ -223,6 +284,19 @@ passport.deserializeUser((user, cb) => {
   cb(null, user);
 });
 
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+function startServer () {
+  try {
+    mongoose.connect(`mongodb+srv://${process.env.MONGO_USER}:${process.env.MONGO_PASSWORD}@secrets.kv6wi.mongodb.net/users?retryWrites=true&w=majority`,
+      { useNewUrlParser: true, useUnifiedTopology: true }
+    );
+    app.listen(port, () => {
+      console.log(`Server running on port ${port}`);
+    });
+  } catch (error) {
+    console.log("error");
+    console.log(error);
+  }
+}
+
+
+startServer();
