@@ -89,7 +89,7 @@ passport.use(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: "http://localhost:3000/auth/google/secrets",
+      callbackURL: `${process.env.DOMAIN}/auth/google/secrets`,
       userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo",
     },
     async (accessToken, refreshToken, profile, cb) => {
@@ -251,38 +251,6 @@ passport.use(
   })
 );
 
-passport.use(
-  "google",
-  new GoogleStrategy(
-    {
-      clientID: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: "http://localhost:3000/auth/google/secrets",
-      userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo",
-    },
-    async (accessToken, refreshToken, profile, cb) => {
-      try {
-        const user = await db.collection("users").findOne({ email: profile.email });
-        if (user) {
-          return cb(null, user);
-        } else {
-          const newUser = { email: profile.email, password: "google" };
-          await db.collection("users").insertOne(newUser);
-          return cb(null, newUser);
-        }
-      } catch (err) {
-        return cb(err);
-      }
-    }
-  )
-);
-passport.serializeUser((user, cb) => {
-  cb(null, user);
-});
-
-passport.deserializeUser((user, cb) => {
-  cb(null, user);
-});
 
 function startServer () {
   try {

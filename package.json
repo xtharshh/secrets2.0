@@ -1,12 +1,16 @@
 {
-  "name": "9.0-secrets-project",
+  "name": "9.0-secrets-projects",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "script": "nodemon index.js"
+    "script": "nodemon index.js",
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "build":"node index.js"
+    
   },
   "keywords": [],
   "author": "",
