@@ -7,21 +7,20 @@ import { Strategy } from "passport-local";
 import GoogleStrategy from "passport-google-oauth2";
 import bcrypt from "bcrypt";
 import mongoose from "mongoose";
+import cors from "cors";
 
 env.config();
 
 const app = express();
-const port = "3000";
+const port = process.env.PORT || 3000;
 const saltRounds = 10;
-
-
 
 const db = mongoose.connection;
 
+// Uncomment these lines if you want to log connection errors
 // db.on("error", (err) => {
-//   console.error("connection error",err);
+//   console.error("connection error", err);
 // });
-
 // db.once("open", () => {
 //   console.log("Connected to MongoDB using Mongoose");
 // });
@@ -41,6 +40,16 @@ const secretSchema = new mongoose.Schema({
 });
 
 const Secret = mongoose.model("Secret", secretSchema);
+
+// Implement CORS
+const corsOptions = {
+  origin: process.env.DOMAIN || "http://localhost:3000", // Allow specific origin
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
 
 app.use(
   session({
@@ -189,7 +198,7 @@ app.post("/register", async (req, res) => {
   const password = req.body.password;
 
   try {
-    const checkResult = await db.collection("users").findOne({ email: email });
+    const checkResult = await User.findOne({ email: email });
 
     if (checkResult) {
       res.redirect("/login");
@@ -198,8 +207,8 @@ app.post("/register", async (req, res) => {
         if (err) {
           console.error("Error hashing password:", err);
         } else {
-          const user = { email: email, password: hash };
-          await db.collection("users").insertOne(user);
+          const user = new User({ email: email, password: hash });
+          await user.save();
           req.login(user, (err) => {
             console.log("success");
             res.redirect("/secrets");
@@ -216,7 +225,7 @@ app.post("/submit", async function (req, res) {
   const submittedSecret = req.body.secret;
   console.log(req.user);
   try {
-    await db.collection("secrets").insertOne({ user_id: req.user.id, secret: submittedSecret });
+    const secret = new Secret({ user_id: req.user.id, secret: submittedSecret });
     res.redirect("/secrets");
   } catch (err) {
     console.log(err);
