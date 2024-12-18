@@ -11,7 +11,7 @@ import mongoose from "mongoose";
 env.config();
 
 const app = express();
-const port = 3000;
+const port = "https://secrets2-0.vercel.app/";
 const saltRounds = 10;
 
 
